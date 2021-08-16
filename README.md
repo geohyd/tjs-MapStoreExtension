@@ -1,4 +1,4 @@
-# MapStore extension for geonetwork extension project
+# MapStore extension for geonetwork extension project - Version: 1.0.0
  
 This repo is a fork of [MapStoreExtension](https://github.com/geosolutions-it/MapStoreExtension).
 
