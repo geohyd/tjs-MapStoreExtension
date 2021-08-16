@@ -9,7 +9,7 @@ Thanks to it a user can:
  - translate attribute table headers based on a geonetwork catalog attributes
  - edit attribute with multiplechoice based on a geonetwork catalog attributes
 
-
+This extension was created on request of DREAL Corse.
 
 ## Build .zip
 
