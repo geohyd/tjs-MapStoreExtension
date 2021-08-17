@@ -5,12 +5,12 @@ import { connect } from 'react-redux';
 import { name } from '../../../config';
 import PropTypes from 'prop-types';
 import {get, find} from 'lodash';
-import { loadData, setMillesimeSelected, setParentSelected } from '../state/actions';
-import geonetworkEpics from '../state/epics';
-import geonetworkExtension from '../state/reducers';
+import { setLayer2TJS, setDatasetSelected, selectSLD, selectFilterColumn, selectFilterValue, joinLayer } from '../state/actions';
+import tjsEpics from '../state/epics';
+import tjsExtension from '../state/reducers';
 
-import SideCard from '../components/SideCardM';
-const {ListGroup, ListGroupItem, Glyphicon: GlyphiconRB, Button: ButtonRB} = require('react-bootstrap');
+const Dialog = require('mapstore2/web/client/components/misc/Dialog');
+const {Glyphicon: GlyphiconRB, Button: ButtonRB, Checkbox} = require('react-bootstrap');
 import tooltip from 'mapstore2/web/client/components/misc/enhancers/tooltip';
 const Button = tooltip(ButtonRB);
 const { DropdownList } = require('react-widgets');
@@ -24,147 +24,184 @@ import Message from "mapstore2/web/client/components/I18N/Message";
 require('../assets/style.css');
 
 /* SELECTORS */
-const geonetworkSelector = createSelector(
-    state => get(state, 'geonetworkExtension.text'),
-    state => get(state, 'geonetworkExtension.style'),
-    state => get(state, 'geonetworkExtension.parentSelected'),
+const tjsSelector = createSelector(
+    state => get(state, 'tjsExtension.style'),
+    state => get(state, 'tjsExtension.layer2TJSSelected'),
     layersSelector,
-    (text, style, parentSelected, layers) =>
-        ({ text, style, parentSelected, layers: layers.filter(l => l.extendedParams && l.extendedParams.millesimeManagement)})
+    (style, layer2TJSSelected, layers) =>
+        ({ style, layer2TJSSelected, layers: layers.filter(l => l.extendedParams && l.extendedParams.tjsManagement)})
 );
 
 /* COMPONENT */
-class GeoNetworkComponent extends React.Component {
+class TJSComponent extends React.Component {
     static propTypes = {
-        text: PropTypes.string,
-        colOrganisme: PropTypes.string,
-        organismeFilter: PropTypes.object,
-        millesimeLayers: PropTypes.bool,
         verbose: PropTypes.bool,
-        translateAttributes: PropTypes.bool,
-        multiChoicesEditor: PropTypes.bool,
-        millesimeKeywords: PropTypes.array,
-        onLoad: PropTypes.func,
+        closeGlyph: PropTypes.string,
+        onSelectLayer2TJS: PropTypes.func,
+        onSelectDataset: PropTypes.func,
+        onSelectSLD: PropTypes.func,
+        onSelectFilterValue: PropTypes.func,
+        onSelectFilterColumn: PropTypes.func,
+        onClickJoinLayer: PropTypes.func,
         style: PropTypes.object,
-        layers: PropTypes.array,
-        onClickMillesime: PropTypes.func,
-        parentSelected: PropTypes.object,
+        layer2TJSSelected: PropTypes.object,
+        removeJoinLayerProperties: PropTypes.array
     };
 
     static defaultProps = {
-        colOrganisme: 'organisme',
-        organismeFilter: true,
-        millesimeLayers: true,
         verbose: false,
-        translateAttributes: true,
-        multiChoicesEditor: true,
-        style: {},
-        layers: [],
-        millesimeKeywords: ['millésime', 'millésimes', 'millesime', 'millesimes', 'mill�simes', 'mill�sime']
+        style: {display: "none"},
+        closeGlyph: "1-close",
+        removeJoinLayerProperties: []
     };
 
     state = {
-        millesimesListToggle: false
+        datasetsModal: false,
+        filterEnabled: false
     };
 
     render() {
         // Should have a render but it can be not displayed
         return (<div className="ms2">
-                    <div id="geonetworkCFG" style={{display: "none"}}
-                        translateAttributes={this.props.translateAttributes.toString()}
-                        multiChoicesEditor={this.props.multiChoicesEditor.toString()}
-                        millesimeLayers={this.props.millesimeLayers.toString()}
-                        millesimeKeywords={this.props.millesimeKeywords.toString()}
-                        colOrganisme={this.props.colOrganisme}
-                        verbose={this.props.verbose.toString()}
-                        organismeFilter={this.props.organismeFilter.toString()} />
-                    {this.props.millesimeLayers && this.props.layers.length > 0 ?
-                        <div className="mapstore-side-card background-millesime-position" style={this.props.style}>
-                            <div className="ms-header ms-primary container-fluid" style={{width: '100%'}}>
-                                <div className="row bg-primary">
-                                    <div className="col-xs-2">
-                                        <div className="square-button bg-primary" style={{display: 'flex'}}>
-                                            <span className="glyphicon glyphicon-tasks"></span>
-                                        </div>
-                                    </div>
-                                    <div className="col-xs-10">
-                                        <h4><span><Message msgId="millesimeManager.title" /></span></h4>
-                                    </div>
-                                </div>
+                    {/* Configuration in hidded div to link state and extension configuration */}
+                    <div id="tjsCFG" style={{display: "none"}}
+                        removeJoinLayerProperties={this.props.removeJoinLayerProperties.toString()}
+                        verbose={this.props.verbose.toString()} />
+                    {/* TJS plugin IHM */}
+                    {this.props.layer2TJSSelected ?
+                        <div>
+                            {/* Open/Close Button TJS */}
+                            <div className="background-tjs-position" style={this.props.style}>
+                                <Button className={`square-button btn-success btn-tjs-position`}
+                                    onClick={() => this.setState({ datasetsModal: !this.state.datasetsModal })}
+                                    tooltipId={<Message msgId="tjsManager.dataJoin" />}
+                                    tooltipPosition="bottom">
+                                    <GlyphiconRB glyph={'link'}/>
+                                </Button>
                             </div>
-                            <div className="dropdown-container">
-                                <DropdownList
-                                    placeholder={<Message msgId="millesimeManager.placeholder" />}
-                                    value={this.props.parentSelected && this.props.parentSelected.title}
-                                    onChange={(layer) => { this.props.onSelectParent(layer) }}
-                                    data={this.props.layers}
-                                    textField="title"
-                                    valueField="id"
-                                />
-                            </div>
-                            { this.props.parentSelected && <SideCard
-                                dropUp={false}
-                                style={{
-                                    transform: 'unset',
-                                    backgroundColor: '#ffffff',
-                                    margin: 0
-                                }}
-                                tools={
-                                    <Button className={`square-button-md${this.state.millesimesListToggle ? ' btn-success' : ' btn-primary'}`}
-                                        onClick={() => this.setState({ millesimesListToggle: !this.state.millesimesListToggle })}
-                                        tooltipId={<Message msgId="millesimeManager.millesimeSelection" />}
-                                        tooltipPosition="bottom">
-                                        <GlyphiconRB glyph={'list'}/>
-                                    </Button>
-                                }
-                                description={
-                                    this.props.parentSelected.extendedParams.millesimeManagement.currentMillesime && <div style={{margin: 0}}>
-                                        <div style={{flex: 1, margin: 0}}>
-                                            {find(this.props.parentSelected.extendedParams.millesimeManagement.layersList, {id: this.props.parentSelected.extendedParams.millesimeManagement.currentMillesime}).title.fre}
-                                        </div>
-                                        <div style={{
-                                            flex: 2,
-                                            margin: 0,
-                                            alignItems: 'center'
-                                        }}>
-                                            <GlyphiconRB
-                                                glyph="1-close glyph-btn"
-                                                tooltipId={<Message msgId="millesimeManager.resetMillesime" />}
-                                                tooltipPosition="bottom"
-                                                onClick={() => this.props.onClickMillesime(this.props.parentSelected.id, null)}
-                                                style={{
-                                                    fontSize: 12
-                                                }}/>
-                                        </div>
-                                    </div>
-                                }
-                                caption={this.props.parentSelected.extendedParams.millesimeManagement.currentMillesime ? "" : <Message msgId="millesimeManager.parentSelected" />}
-                                body={
-                                    <div>
-                                        {this.state.millesimesListToggle &&
-                                        <ListGroup
-                                            style={{
-                                                margin: 0,
-                                                maxheight: 250
-                                            }}>
-                                            {this.props.parentSelected.extendedParams.millesimeManagement.layersList
-                                                .map(millesime => (
-                                                    <ListGroupItem
-                                                        active={millesime.id === this.props.parentSelected.extendedParams.millesimeManagement.currentMillesime}>
-                                                        <div className="row">
-                                                            <div className="col-xs-10"
-                                                                onClick={() => this.props.onClickMillesime(this.props.parentSelected.id, millesime.id)}>
-                                                                <strong>{millesime.title.fre}</strong>
-                                                            </div>
+                            {/* TJS Dialog modal */}
+                            <Dialog id="mapstore-tjs-extension" style={{display: this.state.datasetsModal ? "block" : "none"}} draggable={false} modal={false}>
+                                <span role="header">
+                                    <span className="about-panel-title"><Message msgId="tjsManager.titleModal" /></span>
+                                    <button onClick={() => this.setState({ datasetsModal: !this.state.datasetsModal })} className="settings-panel-close close">{this.props.closeGlyph ? <GlyphiconRB glyph={this.props.closeGlyph}/> : <span>×</span>}</button>
+                                </span>
+                                {/* Body */}
+                                <div role="body">
+                                    <div style={{fontWeight: "bold"}}><Message msgId="tjsManager.datasetsList" /></div>
+                                    {/* Display datasets list if everything is ok */}
+                                    {this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets && this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.list ?
+                                        <DropdownList
+                                            placeholder={<Message msgId="tjsManager.datasetsSelection" />}
+                                            value={
+                                                this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected && find(this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets, {DatasetURI: this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.DatasetURI}).title
+                                            }
+                                            onChange={(dataset) => { this.props.onSelectDataset(this.props.layer2TJSSelected.id, dataset.DatasetURI) }}
+                                            data={this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.list}
+                                            textField="title"
+                                            valueField="DatasetURI"
+                                        /> : <p><Message msgId="tjsManager.datasetsNotFound" /></p>
+                                    }
+                                    {/* Display sld list if everything is ok */}
+                                    {this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets && this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected &&
+                                        <div>
+                                            { this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes ?
+                                                <div className="row">
+                                                    <div className="col-xs-12">
+                                                        <div style={{fontWeight: "bold"}}><Message msgId="tjsManager.sldList" /></div>
+                                                        {this.props.layer2TJSSelected.extendedParams.tjsManagement.sld && this.props.layer2TJSSelected.extendedParams.tjsManagement.sld.list ?
+                                                            <DropdownList
+                                                                placeholder={<Message msgId="tjsManager.sldSelection" />}
+                                                                value={
+                                                                    this.props.layer2TJSSelected.extendedParams.tjsManagement.sld.selected && find(this.props.layer2TJSSelected.extendedParams.tjsManagement.sld.list, {name: this.props.layer2TJSSelected.extendedParams.tjsManagement.sld.selected.name}).title
+                                                                }
+                                                                onChange={(sld) => { this.props.onSelectSLD(this.props.layer2TJSSelected.id, sld.name) }}
+                                                                data={this.props.layer2TJSSelected.extendedParams.tjsManagement.sld.list}
+                                                                textField="title"
+                                                                valueField="name"
+                                                            /> : <p>
+                                                                {this.props.layer2TJSSelected.extendedParams.tjsManagement.sld && this.props.layer2TJSSelected.extendedParams.tjsManagement.sld.loading ?
+                                                                    <Message msgId="tjsManager.sldIsLoading" /> : <Message msgId="tjsManager.sldNotFound" />
+                                                                }
+                                                            </p>
+                                                        }
+                                                    </div>
+                                                    <div className="col-xs-12">
+                                                        <Checkbox
+                                                            onChange={() => {
+                                                                if (this.state.filterEnabled) this.props.onSelectFilterColumn(this.props.layer2TJSSelected.id, undefined)
+                                                                this.setState({ filterEnabled: !this.state.filterEnabled })
+                                                            }}
+                                                            checked={this.state.filterEnabled}>
+                                                            <Message msgId="tjsManager.filterEnabled" />
+                                                        </Checkbox>
+                                                    </div>
+                                                </div> : <p><Message msgId="tjsManager.dataattributesNotFound" /></p>
+                                            }
+                                            {/* Display filter capacity */}
+                                            { this.state.filterEnabled &&
+                                                (
+                                                    this.props.layer2TJSSelected.extendedParams.tjsManagement.sld.selected &&
+                                                    find(this.props.layer2TJSSelected.extendedParams.tjsManagement.sld.list, {name: this.props.layer2TJSSelected.extendedParams.tjsManagement.sld.selected.name})
+                                                ) &&
+                                                <div className="row">
+                                                    <div className="col-xs-6">
+                                                        <div style={{fontWeight: "bold"}}><Message msgId="tjsManager.filterColumnList" /></div>
+                                                        <DropdownList
+                                                            placeholder={<Message msgId="tjsManager.filterColumnSelection" />}
+                                                            value={this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.filter && this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.filter.filterColumn}
+                                                            onChange={(filterColumnSelection) => { this.props.onSelectFilterColumn(this.props.layer2TJSSelected.id, filterColumnSelection.name) }}
+                                                            data={this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.list}
+                                                            textField="title"
+                                                            valueField="name"
+                                                        />
+                                                    </div>
+                                                    {this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.filter &&
+                                                        this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.filter.filterList &&
+                                                        <div className="col-xs-6">
+                                                            <div style={{fontWeight: "bold"}}><Message msgId="tjsManager.filterValueList" /></div>
+                                                            <DropdownList
+                                                                placeholder={<Message msgId="tjsManager.filterValueSelection" />}
+                                                                value={this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.filter.filterValue &&
+                                                                    this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.filter.filterList.indexOf(this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.filter.filterValue) > -1 &&
+                                                                    this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.filter.filterValue}
+                                                                onChange={(filterValueSelection) => { this.props.onSelectFilterValue(this.props.layer2TJSSelected.id, filterValueSelection) }}
+                                                                data={this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.filter.filterList}
+                                                            />
                                                         </div>
-                                                    </ListGroupItem>
-                                            ))}
-                                        </ListGroup>}
-                                    </div>
-                                }
-                                size="sm"
-                                className="ms-date-filter"
-                            />}
+                                                    }
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+                                    {/* Render join button if everything is ok */}
+                                    {(
+                                        this.props.layer2TJSSelected.extendedParams.tjsManagement.sld &&
+                                        this.props.layer2TJSSelected.extendedParams.tjsManagement.sld.selected &&
+                                        find(this.props.layer2TJSSelected.extendedParams.tjsManagement.sld.list, {name: this.props.layer2TJSSelected.extendedParams.tjsManagement.sld.selected.name})
+                                    ) &&
+                                        this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets && this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes &&
+                                        (
+                                            !this.state.filterEnabled ||
+                                            (
+                                                this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.filter &&
+                                                this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.filter.filterColumn &&
+                                                this.props.layer2TJSSelected.extendedParams.tjsManagement.datasets.selected.attributes.filter.filterValue
+                                            )
+                                        ) &&
+                                        <div className="row joinData">
+                                            <Button className={`btn btn-primary`}
+                                                onClick={() => this.props.onClickJoinLayer(this.props.layer2TJSSelected.id)}
+                                                tooltipId={<Message msgId="tjsManager.joinDataExecution" />}
+                                                tooltipPosition="bottom">
+                                                <Message msgId="tjsManager.joinDataExecution" />
+                                            </Button>
+                                        </div>
+                                    }
+                                </div>
+                                <div role="footer">
+                                    <p style={{fontStyle: "italic"}}>{this.props.layer2TJSSelected.title}</p>
+                                </div>
+                            </Dialog>
                         </div > : null}
                 </div>);
     }
@@ -173,13 +210,16 @@ class GeoNetworkComponent extends React.Component {
 /* EXPORT PLUGIN */
 export default {
     name,
-    component: connect(geonetworkSelector,
+    component: connect(tjsSelector,
         {
-            onLoad: loadData,
-            onClickMillesime: setMillesimeSelected,
-            onSelectParent: setParentSelected
+            onSelectLayer2TJS: setLayer2TJS,
+            onSelectDataset: setDatasetSelected,
+            onSelectSLD: selectSLD,
+            onSelectFilterColumn: selectFilterColumn,
+            onSelectFilterValue: selectFilterValue,
+            onClickJoinLayer: joinLayer
         }
-    )(GeoNetworkComponent),
-    reducers: { geonetworkExtension },
-    epics: geonetworkEpics
+    )(TJSComponent),
+    reducers: { tjsExtension },
+    epics: tjsEpics
 };
