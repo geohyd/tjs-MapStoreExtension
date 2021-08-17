@@ -13,6 +13,7 @@ export const SET_FILTER_VALUE = 'TJS:SET_FILTER_VALUE';
 export const JOIN_LAYER_TJS = 'TJS:JOIN_LAYER_TJS';
 export const MANAGE_DATE_ATTRIBUTES = 'TJS:MANAGE_DATE_ATTRIBUTES';
 export const SET_FILTER_COLUMN = 'TJS:SET_FILTER_COLUMN';
+export const CLICK_TJS_BUTTON = 'TJS:CLICK_TJS_BUTTON';
 
 /* ACTIONS FUNCTIONS */
 
@@ -40,6 +41,12 @@ export const updateStyleTjsBtn = (style) => {
     return {
         type: UPDATE_STYLE_BTN,
         style
+    };
+};
+
+export const clickTjsBtn = () => {
+    return {
+        type: CLICK_TJS_BUTTON
     };
 };
 

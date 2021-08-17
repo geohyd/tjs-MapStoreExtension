@@ -5,8 +5,10 @@
       "glyph": "user",
       "title": "TJS",
       "description": "Integration du plugin TJS pour joindre des donnees",
-      "cfg": {
-      }
+      "cfg": {},
+      "dependencies": [
+        "Toolbar"
+      ]
     }
   ]
 }

@@ -5,7 +5,7 @@ import { connect } from 'react-redux';
 import { name } from '../../../config';
 import PropTypes from 'prop-types';
 import {get, find} from 'lodash';
-import { setLayer2TJS, setDatasetSelected, selectSLD, selectFilterColumn, selectFilterValue, joinLayer } from '../state/actions';
+import { setLayer2TJS, setDatasetSelected, selectSLD, selectFilterColumn, selectFilterValue, joinLayer, clickTjsBtn } from '../state/actions';
 import tjsEpics from '../state/epics';
 import tjsExtension from '../state/reducers';
 
@@ -27,15 +27,17 @@ require('../assets/style.css');
 const tjsSelector = createSelector(
     state => get(state, 'tjsExtension.style'),
     state => get(state, 'tjsExtension.layer2TJSSelected'),
+    state => get(state, 'tjsExtension.datasetsModal'),
     layersSelector,
-    (style, layer2TJSSelected, layers) =>
-        ({ style, layer2TJSSelected, layers: layers.filter(l => l.extendedParams && l.extendedParams.tjsManagement)})
+    (style, layer2TJSSelected, datasetsModal, layers) =>
+        ({ style, layer2TJSSelected, datasetsModal, layers: layers.filter(l => l.extendedParams && l.extendedParams.tjsManagement)})
 );
 
 /* COMPONENT */
 class TJSComponent extends React.Component {
     static propTypes = {
         verbose: PropTypes.bool,
+        datasetsModal: PropTypes.bool,
         closeGlyph: PropTypes.string,
         onSelectLayer2TJS: PropTypes.func,
         onSelectDataset: PropTypes.func,
@@ -43,6 +45,7 @@ class TJSComponent extends React.Component {
         onSelectFilterValue: PropTypes.func,
         onSelectFilterColumn: PropTypes.func,
         onClickJoinLayer: PropTypes.func,
+        onClickClosemodal: PropTypes.func,
         style: PropTypes.object,
         layer2TJSSelected: PropTypes.object,
         removeJoinLayerProperties: PropTypes.array
@@ -52,11 +55,11 @@ class TJSComponent extends React.Component {
         verbose: false,
         style: {display: "none"},
         closeGlyph: "1-close",
-        removeJoinLayerProperties: []
+        removeJoinLayerProperties: [],
+        datasetsModal: false
     };
 
     state = {
-        datasetsModal: false,
         filterEnabled: false
     };
 
@@ -70,20 +73,11 @@ class TJSComponent extends React.Component {
                     {/* TJS plugin IHM */}
                     {this.props.layer2TJSSelected ?
                         <div>
-                            {/* Open/Close Button TJS */}
-                            <div className="background-tjs-position" style={this.props.style}>
-                                <Button className={`square-button btn-success btn-tjs-position`}
-                                    onClick={() => this.setState({ datasetsModal: !this.state.datasetsModal })}
-                                    tooltipId={<Message msgId="tjsManager.dataJoin" />}
-                                    tooltipPosition="bottom">
-                                    <GlyphiconRB glyph={'link'}/>
-                                </Button>
-                            </div>
                             {/* TJS Dialog modal */}
-                            <Dialog id="mapstore-tjs-extension" style={{display: this.state.datasetsModal ? "block" : "none"}} draggable={false} modal={false}>
+                            <Dialog id="mapstore-tjs-extension" style={{display: this.props.datasetsModal ? "block" : "none"}} draggable={false} modal={false}>
                                 <span role="header">
                                     <span className="about-panel-title"><Message msgId="tjsManager.titleModal" /></span>
-                                    <button onClick={() => this.setState({ datasetsModal: !this.state.datasetsModal })} className="settings-panel-close close">{this.props.closeGlyph ? <GlyphiconRB glyph={this.props.closeGlyph}/> : <span>×</span>}</button>
+                                    <button onClick={() => this.props.onClickClosemodal()} className="settings-panel-close close">{this.props.closeGlyph ? <GlyphiconRB glyph={this.props.closeGlyph}/> : <span>×</span>}</button>
                                 </span>
                                 {/* Body */}
                                 <div role="body">
@@ -217,9 +211,29 @@ export default {
             onSelectSLD: selectSLD,
             onSelectFilterColumn: selectFilterColumn,
             onSelectFilterValue: selectFilterValue,
-            onClickJoinLayer: joinLayer
+            onClickJoinLayer: joinLayer,
+            onClickClosemodal: clickTjsBtn
         }
     )(TJSComponent),
     reducers: { tjsExtension },
-    epics: tjsEpics
+    epics: tjsEpics,
+    containers: {
+        Toolbar: {
+            name: "TJSExtension",
+            position: 11,
+            icon: <GlyphiconRB glyph="link" />,
+            doNotHide: true,
+            action: clickTjsBtn,
+            selector: (state) => {
+                return {
+                    bsStyle: state.tjsExtension.datasetsModal ? "success" : "primary",
+                    active: state.tjsExtension.datasetsModal,
+                    disabled: state.tjsExtension.layer2TJSSelected ? false : true
+                };
+            },
+            tooltip: "tjsManager.dataJoin",
+            help: <Message msgId="tjsManager.dataJoin"/>,
+            priority: 1
+        }
+    }
 };
