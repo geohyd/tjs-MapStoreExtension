@@ -1,19 +1,27 @@
-.background-millesime-position {
-    top: 0px;
-    left: 0;
+.background-tjs-position {
     position: absolute;
-    z-index: 5000;
-    width: 300px!important;
-    background-color: white;
-    margin: 0!important;
+    width: 100%;
+    top: 0;
+    z-index: 1;
+    margin-top: 5px;
 }
 
-.mapstore-side-preview {
-    overflow: unset!important;
-    width: 100px!important;
+.btn-tjs-position {
+    position: absolute;
+    right: 0;
+    top: 52px;
 }
 
-.dropdown-container {
-    padding-left: 10px;
-    padding-right: 10px;
+#mapstore-tjs-extension {
+    position: fixed;
+    top: 52px;
+    width: 50%;
+    margin-left: 25%;
+    margin-right: 25%;
+}
+
+.joinData {
+    display: flex;
+    padding-top: 10px;
+    justify-content: center;
 }
