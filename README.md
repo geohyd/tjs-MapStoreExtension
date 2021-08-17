@@ -1,13 +1,11 @@
-# MapStore extension for geonetwork extension project - Version: 1.0.0
+# MapStore extension for TJS extension project - Version: 1.0.0
  
 This repo is a fork of [MapStoreExtension](https://github.com/geosolutions-it/MapStoreExtension).
 
-It contains the client side of the geonetwork extension project.
+It contains the client side of the TJS extension project.
 
 Thanks to it a user can:
- - visualize millesime layers (parent-child geonetwork files)
- - translate attribute table headers based on a geonetwork catalog attributes
- - edit attribute with multiplechoice based on a geonetwork catalog attributes
+ - join data from a TJS Server if a framework exist for a WFS or WMS layer
 
 This extension was created on request of DREAL Corse.
 
@@ -15,7 +13,7 @@ This extension was created on request of DREAL Corse.
 
 Clone the repository with the --recursive option to automatically clone submodules.
 
-`git clone --recursive https://github.com/geohyd/geonetwork-MapStoreExtension`
+`git clone --recursive https://github.com/geohyd/tjs-MapStoreExtension`
 
 Install NodeJS >= 12.16.1 , if needed, from [here](https://nodejs.org/en/download/releases/).
 
@@ -26,20 +24,20 @@ Install the app and then build the .zip archive to be imported in MapStore :
 
 `npm run ext:build`
  
- This will create a `GeonetworkExtension.zip` zip in `dist` directory.
+ This will create a `TJSExtension.zip` zip in `dist` directory.
  
 ## Add the extension to your MapStore instance 
  
- - from UI : import `GeonetworkExtension.zip` throught a context creator/editor (this will automatically create the `pluginsConfig.json.patch` file which effects are documented below)
+ - from UI : import `TJSExtension.zip` throught a context creator/editor (this will automatically create the `pluginsConfig.json.patch` file which effects are documented below)
    
  or 
- - copy zip content in `georchestra_datadir/mapstore/dist/extensions/GeonetworkExtension/`
+ - copy zip content in `georchestra_datadir/mapstore/dist/extensions/TJSExtension/`
  - create/edit the following files in `georchestra_datadir/mapstore` :
       - `extensions.json` (to reference extensions) : 
         `{
-          "GeonetworkExtension": {
-            "bundle":"dist/extensions/GeonetworkExtension/index.js",
-            "translations":"dist/extensions/GeonetworkExtension/translations"
+          "TJSExtension": {
+            "bundle":"dist/extensions/TJSExtension/index.js",
+            "translations":"dist/extensions/TJSExtension/translations"
           }
         }`
       - `pluginsConfig.json.patch` (optionnal, see below) :
@@ -48,7 +46,7 @@ Install the app and then build the .zip archive to be imported in MapStore :
              "op":"add",
              "path":"/plugins/-",
              "value": {
-               "name":"GeonetworkExtension",
+               "name":"TJSExtension",
                "dependencies":["Toolbar"],
                "extension":true
              }

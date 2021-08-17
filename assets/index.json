@@ -1,17 +1,14 @@
 {
   "plugins": [
     {
-      "name": "GeonetworkExtension",
+      "name": "TJSExtension",
       "glyph": "user",
-      "title": "GeoNetwork",
-      "description": "Connectivite des fiches geonetwork aux couches associees.\n Gestion des droits utilisateurs sur les couches par filtre d'organisme.",
-      "cfg": {
-        "translateAttributes" : true,
-        "multiChoicesEditor" : true,
-        "colOrganisme" : "organisme",
-        "organismeFilter" : true,
-        "millesimeLayers": true
-      }
+      "title": "TJS",
+      "description": "Integration du plugin TJS pour joindre des donnees",
+      "cfg": {},
+      "dependencies": [
+        "Toolbar"
+      ]
     }
   ]
 }

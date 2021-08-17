@@ -4,31 +4,25 @@ import * as Rx from 'rxjs';
 import axios from 'axios';
 const assign = require('object-assign');
 // ACTIONS
-import { loadedData, loadError, updateStyleMillesimeBtn, GET_MILLESIME_LAYERS, getMillesimeLayers, SET_MILLESIME_SELECTED, setParentSelected } from './actions';
-const { FEATURE_TYPE_LOADED, resetQuery } = require('mapstore2/web/client/actions/wfsquery');
-const { ADD_LAYER, REMOVE_NODE, changeLayerProperties, browseData } = require('mapstore2/web/client/actions/layers');
+import { SET_FILTER_VALUE, SET_FILTER_COLUMN, loadError, updateStyleTjsBtn, GET_TJS_FRAMEWORK, getTJSFramework, getTJSDatasets, GET_TJS_DATASETS, SET_DATASET_SELECTED, setLayer2TJS, getSLDLayer, GET_SLD_LAYER, SET_SLD_SELECTED, JOIN_LAYER_TJS, joinLayer } from './actions';
+const { ADD_LAYER, REMOVE_NODE, changeLayerProperties, SELECT_NODE, addLayer, addGroup, moveNode, LAYER_LOAD } = require('mapstore2/web/client/actions/layers');
 const { MAP_CONFIG_LOADED } = require('mapstore2/web/client/actions/config');
-import { UPDATE_MAP_LAYOUT } from 'mapstore2/web/client/actions/maplayout';
-import { clickOnMap } from 'mapstore2/web/client/actions/map';
-import { TOGGLE_MODE, CREATE_NEW_FEATURE, featureModified, updateFilter, customizeAttribute, updateCustomEditorsOptions } from 'mapstore2/web/client/actions/featuregrid';
 // SELECTORS
-import { clickPointSelector, mapInfoRequestsSelector } from 'mapstore2/web/client/selectors/mapInfo';
-const { typeNameSelector, describeSelector, resultsSelector } = require('mapstore2/web/client/selectors/query');
-import {layersSelector, getLayerFromId} from 'mapstore2/web/client/selectors/layers';
-import { userSelector } from 'mapstore2/web/client/selectors/security';
-import { isFeatureGridOpen } from 'mapstore2/web/client/selectors/featuregrid';
+import {layersSelector, getSelectedLayers, getLayerFromId, groupsSelector} from 'mapstore2/web/client/selectors/layers';
 // UTILS
-const { find, get, cloneDeep } = require("lodash");
-import API from '../assets/CSW';
+const { find, get, set, uniq, isArray, cloneDeep, findIndex } = require("lodash");
+import API from '../assets/TJS';
+import { describeFeatureType } from 'mapstore2/web/client/api/WFS';
+import { getCapabilities } from 'mapstore2/web/client/api/WMS';
 
 /* PRIVATE FUNCTIONS */
 /**
  * find the cfg key of the plugin
  */
-const getCFGGeonetwork = (key) => {
-    var geonetworkCFG = document.querySelector('#geonetworkCFG');
-    if (geonetworkCFG) {
-        var tt = geonetworkCFG.getAttribute(key);
+const getCFG = (key) => {
+    var tjsCFG = document.querySelector('#tjsCFG');
+    if (tjsCFG) {
+        var tt = tjsCFG.getAttribute(key);
         if (['true', 'false'].indexOf(tt.toLowerCase()) > -1) tt = !!JSON.parse(String(tt).toLowerCase());
         return tt;
     }
@@ -36,596 +30,986 @@ const getCFGGeonetwork = (key) => {
 }
 
 /**
- * return the organisme value from the html string
- * @param {string} data
+ * function to homogenize capabilities error of all request
+ * @param {*} error
  */
-const getOrganismeUser = (data) => {
-    var parser = new DOMParser();
-    var htmlDoc = parser.parseFromString(data, "text/html");
-    var scripts = htmlDoc.querySelectorAll('script');
-    var scriptHTML;
-    // Loop over each script balise to find the one containing "org"
-    for (var ii in scripts) {
-        if (scripts[ii] && scripts[ii].innerHTML) {
-            if (scripts[ii].innerHTML.startsWith('var org = {')) {
-                scriptHTML = scripts[ii].innerHTML;
-                break;
-            }
-        }
+const getCapabilitiesERROR = (error, type, callbacks) => {
+    console.log(type + ' Getcapabilities doesn t succeed')
+    // Get capabilities not succeed
+    console.log(error);
+    if (getCFG('verbose')) {
+        console.groupEnd()
     }
-    // Parsing the innerHTML
-    var org = scriptHTML.split('};')[0] + '}';
-    var idStart = org.indexOf('{');
-    org = JSON.parse(org.slice(idStart));
-    return org;
-}
-
-/**
- * return the erro from request geonetwork
- * @param {string} data
- */
-const getGeoNetworkERROR = (data) => {
-    var parser = new DOMParser();
-    var htmlDoc = parser.parseFromString(data, "text/html");
-    var error = htmlDoc.querySelector('.lead');
-    if (error) {
-        return error.innerHTML;
-    }
-    return null;
+    // Return list of observable actions
+    return callbacks;
 }
 
 /* EPICS HOOKS */
-const loadFeatureAttributeEpic = (action$, store) => {
-    // on each FEATURE_TYPE_LOADED action triggered
-    return action$.ofType(FEATURE_TYPE_LOADED)
+const onSelectLayerDisplayTJSButton = (action$, store) => {
+    // on each SELECT_NODE action triggered
+    return action$.ofType(SELECT_NODE)
         .switchMap((action) => {
-            // Epic enabled ?
-            if (!getCFGGeonetwork('translateAttributes')) {
-                return Rx.Observable.empty();
-            }
-
-            // Get catalogURL
+            // Find layersSelected
             const state = store.getState();
-            var layer = find(state.layers.flat, {id: state.layers.selected[0]});
-            if (layer.catalogURL || (layer.extendedParams && layer.extendedParams.annexeCatalogURL)) {
-                // Check if there is other catalog (childrens, etc) ORDER is important, be sure to have the master catalogURL at the end
-                var catalogURLS = [];
-                if (layer.extendedParams && layer.extendedParams.annexeCatalogURL) {
-                    catalogURLS.push(layer.extendedParams.annexeCatalogURL);
+            var selectedLayers = getSelectedLayers(state);
+            // executed if only one layer is selected
+            if (selectedLayers.length === 1 && selectedLayers[0]) {
+                // Find the current layer
+                var layer = getLayerFromId(state, selectedLayers[0].id);
+                if (getCFG('verbose')) {
+                    console.group('| TJSPlugin | onSelectLayerDisplayTJSButton')
+                    console.log('init layer state ->')
+                    console.dir(cloneDeep(layer))
+                    console.groupEnd()
                 }
-                if (layer.catalogURL) catalogURLS.push(layer.catalogURL);
-                // Get Feature catalog ID from Parent
-                return Rx.Observable.defer(() => axios.all(catalogURLS.map(catalogURL => API.getRecordById(catalogURL, undefined, { related: 'fcats' }))))
-                    .switchMap(function(fCatsIDMatrix) {
-                        if (fCatsIDMatrix) {
-                            // Split the matrix into a single array
-                            var fCatsID = [];
-                            var extendedCatalogURLS = [];
-                            fCatsIDMatrix.forEach(function(ids, ii) {
-                                fCatsID = fCatsID.concat(ids);
-                                extendedCatalogURLS = extendedCatalogURLS.concat(Array.from(new Array(ids.length), x => catalogURLS[ii]));
-                            })
-                            // Get attributes with id related
-                            return Rx.Observable.defer(() => axios.all(fCatsID.map((id, index) => API.getRecordFeatureCatalogById(extendedCatalogURLS[index], id))))
-                                .switchMap(function(responses) {
-                                    if (responses) {
-                                        // Loop over each response (order is important)
-                                        // List of actions to return
-                                        var actions = [];
-                                        responses.forEach(function(response, iresponse) {
-                                            if (response.cOC && response.cOC.FC_FeatureAttribute) {
-                                                var fca = response.cOC.FC_FeatureAttribute;
-                                                // Loop over each feature attributes
-                                                for (var i = 0; i < fca.length; i++) {
-                                                    // Add label
-                                                    actions.push(customizeAttribute(fca[i].name.toLowerCase(), 'label', fca[i].label));
-                                                    // Check if there is a list of multiple choices
-                                                    if (fca[i].values && getCFGGeonetwork('multiChoicesEditor')) {
-                                                        var customEditorsOptions = get(state, "featuregrid.customEditorsOptions");
-                                                        if (!customEditorsOptions) {
-                                                            customEditorsOptions = {
-                                                                'rules': []
-                                                            }
-                                                        }
-                                                        var labels = [];
-                                                        fca[i].values.forEach(function(value, id) {
-                                                            labels.push(value + ' ( ' + fca[i].labels[id] + ' )');
-                                                        });
-                                                        // Rules already exist
-                                                        var existingRules = find(customEditorsOptions.rules.regexp, {attribute: fca[i].name.toLowerCase()})
-                                                        if (existingRules) {
-                                                            existingRules.editorProps.values = fca[i].values;
-                                                            existingRules.editorProps.labels = labels;
-                                                            existingRules.editorProps.defaultOption = fca[i].values[0];
-                                                        } else {
-                                                            customEditorsOptions.rules.push({
-                                                                "regex": {
-                                                                    "attribute": fca[i].name.toLowerCase(),
-                                                                    "typeName": typeNameSelector(state)
-                                                                },
-                                                                "editor": "DropDownEditor",
-                                                                "editorProps": {
-                                                                    "values": fca[i].values,
-                                                                    "labels": labels,
-                                                                    "forceSelection": true,
-                                                                    "defaultOption": fca[i].values[0],
-                                                                    "allowEmpty": false
-                                                                }
-                                                            })
-                                                        }
-                                                        // Add multiple choices as customeditorsoptions
-                                                        actions.push(updateCustomEditorsOptions(customEditorsOptions))
-                                                    }
-                                                }
-                                            }
-                                        })
-                                        // Trigger actions
-                                        return Rx.Observable.from(actions);
-                                    }
-                                    return Rx.Observable.of(loadedData('No csw catalog attributes found'))
-                                })
-                                .catch(function(e) {
-                                    console.log(e);
-                                    return Rx.Observable.of(loadError(e.message))
-                                });
-                        }
-                        return Rx.Observable.empty();
-                    })
-                    .catch(function(e) {
-                        console.log(e);
-                        return Rx.Observable.of(loadError(e.message))
-                    });
+                var tjsManagement = layer.extendedParams && layer.extendedParams.tjsManagement;
+                // no tjsManagement field -> don't show the button
+                if (tjsManagement) {
+                    return Rx.Observable.from([
+                        setLayer2TJS(layer),
+                        updateStyleTjsBtn({display: "block"})
+                    ]);
+                }
             }
-            return Rx.Observable.of(loadedData('No csw feature catalog found'));
+            // WARNING - ACTION DOESN T SEEM TO WORK
+            return Rx.Observable.from([
+                setLayer2TJS(null),
+                updateStyleTjsBtn({display: "none"})
+            ]);
         });
 };
 
-const toggleDisplayColumnOrganismeEpic = (action$, store) => {
-    // on each TOGGLE_MODE action triggered
-    return action$.ofType(TOGGLE_MODE)
-        .switchMap((action) => {
-            // Epic enabled ?
-            if (!getCFGGeonetwork('organismeFilter')) {
-                return Rx.Observable.empty();
-            }
-
-            const state = store.getState();
-            // Warning - Changing selector will directly update state -> need refresh element (not specialy trigger actions)
-            var features = resultsSelector(state);
-            var describeFeatureType = describeSelector(state);
-            const user = userSelector(state);
-            var colOrganisme = getCFGGeonetwork('colOrganisme');
-            if (colOrganisme) {
-                // Get organisme of the user
-                return Rx.Observable.defer(() => axios.get('/console/account/userdetails'))
-                    .switchMap(function(response) {
-                        // Response is an html string
-                        // Need to parse it to acess to the organisme value
-                        try {
-                            var org = getOrganismeUser(response.data);
-                        } catch (error) {
-                            console.log(error)
-                            return Rx.Observable.of(loadError(error));
+const onAddLayerFindTJSFramework = (action$, store) => {
+    // on each ADD_LAYER try to find if it is possible de make a join tjs with it
+    return action$.ofType(ADD_LAYER)
+            .switchMap((addLayerAction) =>
+                action$.ofType(LAYER_LOAD)
+                    .take(1) // <-------------------- very important!
+                    .switchMap((action) => {
+                        // Find layer in store
+                        var layer = getLayerFromId(store.getState(), addLayerAction.layer.id);
+                        if (getCFG('verbose')) {
+                            console.group('| TJSPlugin | onAddLayerFindTJSFramework')
+                            console.log('init layer state ->')
+                            console.dir(cloneDeep(layer))
                         }
 
-                        if ( features && find(describeFeatureType.featureTypes[0].properties, {name: colOrganisme}) && user.role == "ADMIN" && org) {
-                            // If EDIT add colOrganisme filtering else remove it
-                            if (action.mode === 'EDIT') {
-                                var update = {
-                                    rawValue: org.shortName,
-                                    value: org.shortName,
-                                    operator: "ilike",
-                                    type: "string",
-                                    attribute: colOrganisme
-                                }
-                            } else if (action.mode === 'VIEW') {
-                                var update = {
-                                    rawValue: "",
-                                    operator: "ilike",
-                                    type: "string",
-                                    attribute: colOrganisme
+                        // Check service of the layer
+                        if (layer && layer.url && layer.type && ['wms', 'wfs'].indexOf(layer.type) > -1) {
+                            if (getCFG('verbose')) {
+                                console.log('Trigger - getTJSFramework');
+                                console.groupEnd();
+                            }
+                            return Rx.Observable.of(getTJSFramework(layer.id));
+                        }
+                        return Rx.Observable.empty();
+                    })
+            )
+};
+
+const onGetTJSFramework = (action$, store) => {
+    // on action from UI
+    return action$.ofType(GET_TJS_FRAMEWORK)
+        .mergeMap((action) => {
+            // Find layer in store
+            var layer = getLayerFromId(store.getState(), action.id);
+            if (getCFG('verbose')) {
+                console.group('| TJSPlugin | onGetTJSFramework')
+                console.log('init layer state ->')
+                console.log(cloneDeep(layer))
+            }
+            // Don't look at previous tjsManagement -> override
+            var url = layer.url.replace(/wfs|wms/g, "tjs");
+            // Start with getCapatabilities
+            return Rx.Observable.defer(() => API.getCapabilities(url))
+                .switchMap(function(response) {
+                    // Response error ?
+                    if (getCFG('verbose')) {
+                        console.group('describeFrameworks TJS and describeFeatureType WFS');
+                    }
+                    // Response only status 200 (other are in catch error)
+                    // Get match between WFS featureType and FrameworkURI
+                    var requests = [
+                        API.describeFrameworks(url),
+                        describeFeatureType(layer.url, layer.name)
+                    ];
+                    return Rx.Observable.defer(() => axios.all(requests))
+                        .switchMap(function(responses) {
+                            // Reset TJS management
+                            var tjsManagement = {
+                                layerName: responses[1].featureTypes[0].typeName,
+                                layerWorkspace: responses[1].targetNamespace,
+                                url: url
+                            };
+                            // Loop over each Framework founded
+                            if (responses[0].FrameworkDescriptions && responses[0].FrameworkDescriptions.Framework) {
+                                if (Array.isArray(responses[0].FrameworkDescriptions.Framework)) {
+                                    responses[0].FrameworkDescriptions.Framework.forEach(function(framework) {
+                                        // isMatch ?
+                                        if ( framework.FrameworkURI && framework.FrameworkURI === (tjsManagement.layerWorkspace + '/' + tjsManagement.layerName) ) {
+                                            tjsManagement.FrameworkURI = framework.FrameworkURI;
+                                            tjsManagement.FrameworkKey = framework.FrameworkKey.Column.$['name'];
+                                        }
+                                    })
+                                } else {
+                                    // isMatch ?
+                                    var framework = responses[0].FrameworkDescriptions.Framework;
+                                    if ( framework.FrameworkURI && framework.FrameworkURI === (tjsManagement.layerWorkspace + '/' + tjsManagement.layerName) ) {
+                                        tjsManagement.FrameworkURI = framework.FrameworkURI;
+                                        tjsManagement.FrameworkKey = framework.FrameworkKey.Column.$['name'];
+                                    }
                                 }
                             }
-                            return Rx.Observable.of(updateFilter(update));
-                        }
-                        return Rx.Observable.empty();
-                    })
-                    .catch(function(e) {
-                        console.log(e);
-                        return Rx.Observable.of(loadError(e.message))
-                    });
-            }
-            return Rx.Observable.of(loadedData('No column Organisme founded'))
+                            // Set tjsManagement to the layer if all matches worked
+                            var actions = [];
+                            if (tjsManagement.FrameworkURI) {
+                                // Style loading
+                                tjsManagement.sld = {
+                                    loading: true
+                                };
+                                // Add tjsManagement
+                                actions.push(changeLayerProperties(action.id, {
+                                    extendedParams: layer.extendedParams ? assign(layer.extendedParams, {
+                                        tjsManagement: tjsManagement
+                                    }) : {
+                                        tjsManagement: tjsManagement
+                                    }
+                                }));
+                                // Add dimension "TJS" for icon
+                                if (layer.dimensions && find(layer.dimensions, {name: "tjs"}) === undefined) {
+                                    layer.dimensions.push({
+                                        name: "tjs",
+                                        layerId: action.id
+                                    })
+                                }
+                                actions.push(changeLayerProperties(action.id, {
+                                    dimensions: layer.dimensions ? layer.dimensions : [{
+                                        name: "tjs",
+                                        layerId: action.id
+                                    }]
+                                }));
+                                // Get Datasets and SLDs in the same time
+                                actions.push(getTJSDatasets(action.id));
+                                actions.push(getSLDLayer(action.id));
+                                if (getCFG('verbose')) {
+                                    console.log('new layer properties ->')
+                                    console.dir(tjsManagement);
+                                    console.dir(layer.dimensions ? layer.dimensions : [{
+                                        name: "tjs",
+                                        layerId: action.id
+                                    }]);
+                                    console.log('Trigger changeLayerProperties, getTJSDatasets, getSLDLayer');
+                                    console.groupEnd();
+                                    console.groupEnd();
+                                }
+                                return Rx.Observable.from(actions);
+                            } else {
+                                console.log('No framework founded -> no tjs management for the layer');
+                                if (getCFG('verbose')) {
+                                    console.groupEnd();
+                                    console.groupEnd();
+                                }
+                                // Layer as already an extendedParams ?
+                                if (layer.extendedParams && layer.extendedParams.tjsManagement) {
+                                    actions.push(changeLayerProperties(action.id, {
+                                        extendedParams: assign(layer.extendedParams, {
+                                            tjsManagement: undefined
+                                        })
+                                    }));
+                                }
+                                // Remove dimension TJS if exist
+                                actions.push(changeLayerProperties(action.id, {
+                                    dimensions: layer.dimensions ? layer.dimensions.filter((item) => {return item.name != "tjs"}) : []
+                                }));
+                                return Rx.Observable.from(actions);
+                            }
+                        })
+                        .catch(function(e) {
+                            console.log('One request doesn t succeed describeFrameworks or describeFeatureType WFS')
+                            // One service is not available WFS or TJS describeFrameworks
+                            console.log(e);
+                            if (getCFG('verbose')) {
+                                console.groupEnd();
+                                console.groupEnd();
+                            }
+                            // If error, reset tjsManagement
+                            if (layer.extendedParams && layer.extendedParams.tjsManagement) {
+                                // Reset
+                                return Rx.Observable.of(changeLayerProperties(action.id, {
+                                    extendedParams: assign(layer.extendedParams, {
+                                        tjsManagement: undefined
+                                    }),
+                                    dimensions: layer.dimensions ? layer.dimensions.filter((item) => {return item.name != "tjs"}) : []
+                                }));
+                            }
+                            return Rx.Observable.empty();
+                        })
+                })
+                .catch(function(e) {
+                    var callbacks = [];
+                    if (layer.extendedParams && layer.extendedParams.tjsManagement) {
+                        callbacks.push(changeLayerProperties(action.id, {
+                            extendedParams: assign(layer.extendedParams, {
+                                tjsManagement: undefined
+                            }),
+                            dimensions: layer.dimensions ? layer.dimensions.filter((item) => {return item.name != "tjs"}) : []
+                        }));
+                    }
+                    return Rx.Observable.from(getCapabilitiesERROR(e, "TJS", callbacks));
+                });
         });
 };
 
-const editNewFeatureOrganisme = (action$, store) => {
-    // on each CREATE_NEW_FEATURE action triggered
-    return action$.ofType(CREATE_NEW_FEATURE)
+const onGetTJSDatasets = (action$, store) => {
+    // triggered when a layer has the capacity to be joinded and has framewokrs
+    return action$.ofType(GET_TJS_DATASETS)
         .switchMap((action) => {
-            // Epic enabled ?
-            if (!getCFGGeonetwork('organismeFilter')) {
-                return Rx.Observable.empty();
-            }
-
-            // Access to different state values
-            const state = store.getState();
-            const user = userSelector(state);
-            var describeFeatureType = describeSelector(state);
-            var features = resultsSelector(state);
-            var colOrganisme = getCFGGeonetwork('colOrganisme');
-            if (colOrganisme) {
-                // Get organisme
-                return Rx.Observable.defer(() => axios.get('/console/account/userdetails'))
-                    .switchMap(function(response) {
-                        // Response is an html string
-                        // Need to parse it to acess to the organisme value
-                        try {
-                            var org = getOrganismeUser(response.data);
-                        } catch (error) {
-                            console.log(error)
-                            return Rx.Observable.of(loadError(error));
-                        }
-
-                        if ( features && find(describeFeatureType.featureTypes[0].properties, {name: colOrganisme}) && user.role == "ADMIN" && org) {
-                            var updated = {};
-                            updated[colOrganisme] = org.shortName;
-                            return Rx.Observable.of(featureModified(state.featuregrid.newFeatures, updated));
-                        }
-
-                        return Rx.Observable.empty();
-
-                    })
-                    .catch(function(e) {
-                        console.log(e);
-                        return Rx.Observable.of(loadError(e.message))
-                    });
-            }
-
-            return Rx.Observable.of(loadedData('No column Organisme founded'))
-        });
-};
-
-const updateMillesimeButtonPosition = (action$, store) => {
-    // on each CREATE_NEW_FEATURE action triggered
-    return action$.ofType(UPDATE_MAP_LAYOUT)
-        .switchMap((action) => {
-            var leftRef = 52
-            // Manage TOC display
-            if (action.layout.left != 0) {
-                leftRef = 5
-            }
-            if (getCFGGeonetwork('verbose')) {
-                console.group('| GeoNetworkPlugin | updateMillesimeButtonPosition')
-                console.groupEnd()
-            }
-
-            return Rx.Observable.of(updateStyleMillesimeBtn({left: leftRef + action.layout.left}))
-        });
-};
-
-const onAddLayerFindMillesime = (action$, store) => {
-    // on each CREATE_NEW_FEATURE action triggered
-    return action$.ofType(ADD_LAYER)
-        .switchMap((action) => {
-            // Epic enabled ?
-            if (!getCFGGeonetwork('millesimeLayers')) {
-                return Rx.Observable.empty();
-            }
-            const state = store.getState();
-            if (getCFGGeonetwork('verbose')) {
-                console.group('| GeoNetworkPlugin | onAddLayerFindMillesime')
+            // Find the layer
+            var layer = getLayerFromId(store.getState(), action.id);
+            if (getCFG('verbose')) {
+                console.group('| TJSPlugin | onGetTJSDatasets')
                 console.log('init layer state ->')
-                console.dir(cloneDeep(action.layer))
-                console.groupEnd()
+                console.log(cloneDeep(layer))
             }
-            // Check if catalogURL exist (means CSW)
-            var catalogURL = find(state.layers.flat, {id: action.layer.id}).catalogURL;
-            if (catalogURL) {
-                // Need first millesimeManagement to have no conflict with other plugins
-                return Rx.Observable.of(
-                    changeLayerProperties(action.layer.id, {
-                        extendedParams: action.layer.extendedParams ? assign(action.layer.extendedParams, {millesimeManagement: undefined}) : {millesimeManagement: undefined}
-                    }),
-                    getMillesimeLayers(action.layer.id)
-                );
+            // Current layer has tjsManagement ?
+            var tjsManagement = layer.extendedParams && layer.extendedParams.tjsManagement;
+            if (tjsManagement && tjsManagement.FrameworkURI && tjsManagement.url) {
+                // Start with getCapatabilities (should be fast due to cache)
+                return Rx.Observable.defer(() => API.getCapabilities(tjsManagement.url))
+                    .switchMap(function(response) {
+                        // Response error ?
+                        if (response.error) throw response.error;
+                        if (getCFG('verbose')) {
+                            console.group('describeDatasets TJS');
+                        }
+                        // Response only status 200 (other are in catch error)
+                        // Get all datasets associated
+                        return Rx.Observable.defer(() => API.describeDatasets(tjsManagement.url, tjsManagement.FrameworkURI))
+                            .switchMap(function(response) {
+                                // Append datasets to the tjsManagement params
+                                if (response && response.DatasetDescriptions && response.DatasetDescriptions.Framework && response.DatasetDescriptions.Framework.Dataset) {
+                                    // Loop over each datasets
+                                    var datasets = {
+                                        list: []
+                                    };
+                                    if (isArray(response.DatasetDescriptions.Framework.Dataset)) {
+                                        response.DatasetDescriptions.Framework.Dataset.forEach(function(dataset) {
+                                            // Means raw dataset
+                                            if (!dataset.DatasetURI.includes('DatasetURI')) {
+                                                datasets.list.push({
+                                                    title: dataset.Title,
+                                                    DatasetURI: dataset.DatasetURI,
+                                                    Documentation : dataset.Documentation
+                                                })
+                                            }
+                                        })
+                                    } else {
+                                        // Means raw dataset
+                                        if (!response.DatasetDescriptions.Framework.Dataset.DatasetURI.includes('DatasetURI')) {
+                                            datasets.list.push({
+                                                title: response.DatasetDescriptions.Framework.Dataset.Title,
+                                                DatasetURI: response.DatasetDescriptions.Framework.Dataset.DatasetURI,
+                                                Documentation : response.DatasetDescriptions.Framework.Dataset.Documentation
+                                            })
+                                        }
+                                    }
+                                    // Append
+                                    tjsManagement.datasets = datasets;
+                                    if (getCFG('verbose')) {
+                                        console.log('new layer properties ->')
+                                        console.dir(tjsManagement)
+                                        console.groupEnd()
+                                        console.groupEnd()
+                                    }
+                                    return Rx.Observable.of(changeLayerProperties(action.id, {
+                                        extendedParams: assign(layer.extendedParams, {
+                                            tjsManagement: tjsManagement
+                                        })
+                                    }))
+                                } else {
+                                    // No dataset founded
+                                    console.log('TJS describeDatasets doesn t succeed')
+                                    console.log(response)
+                                    if (getCFG('verbose')) {
+                                        console.groupEnd()
+                                        console.groupEnd()
+                                    }
+                                    if (tjsManagement.datasets) {
+                                        delete tjsManagement.datasets;
+                                        return Rx.Observable.of(changeLayerProperties(action.id, {
+                                            extendedParams: assign(layer.extendedParams, {
+                                                tjsManagement: tjsManagement
+                                            })
+                                        }))
+                                    }
+                                    return Rx.Observable.empty();
+                                }
+                            })
+                            .catch(function(e) {
+                                console.log('TJS describeDatasets doesn t succeed')
+                                // Erreur avec le servide DescribeDatasets
+                                console.log(e);
+                                if (getCFG('verbose')) {
+                                    console.groupEnd()
+                                    console.groupEnd()
+                                }
+                                var actions = [loadError(e.message)];
+                                if (tjsManagement.datasets) {
+                                    delete tjsManagement.datasets;
+                                    actions.push(changeLayerProperties(action.id, {
+                                        extendedParams: assign(layer.extendedParams, {
+                                            tjsManagement: tjsManagement
+                                        })
+                                    }))
+                                }
+                                // Que faire des erreurs ?
+                                return Rx.Observable.from(actions);
+                            })
+                    })
+                    .catch(function(e) {
+                        return Rx.Observable.from(getCapabilitiesERROR(e, "TJS", [loadError(e.message)]));
+                    });
+            } else {
+                if (getCFG('verbose')) {
+                    console.groupEnd()
+                }
+                // No tjsManagement field founded
+                return Rx.Observable.empty();
             }
-            return Rx.Observable.empty();
         });
 };
 
-const onGetMillesimesLayers = (action$, store) => {
-    // on each CREATE_NEW_FEATURE action triggered
-    return action$.ofType(GET_MILLESIME_LAYERS)
-        .mergeMap((action) => {
+const onGetSLDLayer = (action$, store) => {
+    // triggered when a layer has the capacity to be joinded and has framewokrs -> find sld styles
+    return action$.ofType(GET_SLD_LAYER)
+        .switchMap((action) => {
+            // Find the layer
             const state = store.getState();
-            // Check if layer is from CSW catalog
             var layer = getLayerFromId(state, action.id);
-            var catalogURL = layer.catalogURL;
-            if (getCFGGeonetwork('verbose')) {
-                console.group('| GeoNetworkPlugin | onGetMillesimesLayers')
+            if (getCFG('verbose')) {
+                console.group('| TJSPlugin | onGetSLDLayer')
                 console.log('init layer state ->')
                 console.dir(cloneDeep(layer))
             }
-            if (catalogURL) {
-                // Get all childrens
-                return Rx.Observable.defer(() => API.getRecordById(catalogURL, undefined, { related: 'children' }))
-                    .switchMap(function(childrens) {
-                        // Current layer has MillesimeManagement ?
-                        var millesimeManagement = layer.extendedParams && layer.extendedParams.millesimeManagement;
-                        if (childrens) {
-                            if (getCFGGeonetwork('verbose')) {
-                                console.group('Parse Childrens')
-                            }
-                            // Filter children by millesime tags
-                            var requests = [];
-                            var childrensToKeep = [];
-                            childrens.forEach(function(children) {
-                                if (children.id && children.mdType && children.mdType.indexOf('dataset') > -1) {
-                                    requests.push(API.getRecordById(catalogURL, children.id))
-                                    childrensToKeep.push(children);
-                                }
-                            })
-                            return Rx.Observable.defer(() => axios.all(requests))
-                                .switchMap(function(responses) {
-                                    if (responses) {
-                                        var millesimeLayersList = [];
-                                        var matches = getCFGGeonetwork('millesimeKeywords').split(',');
-                                        // Loop over each results
-                                        responses.forEach(function(response, iresponse) {
-                                            // Get keywords
-                                            var keywords = API.getKeywordsFromJSON(response);
-                                            // Check if the layer is a millesime one
-                                            keywords.forEach(function(keyword) {
-                                                var boolOk = true;
-                                                // TODO: strip accent "millï¿½sime"
-                                                if (matches.indexOf(keyword) > -1) {
-                                                    // TODO : verification is it the real match
-                                                    childrensToKeep[iresponse]['record'] = response;
-                                                    // Check if the millesime has a distribution protocol
-                                                    try {
-                                                        name = API.getNameVSLayerFromJSON(response, layer);
-                                                    } catch (e) {
-                                                        // Let display all millesime with different protocol or URL doesn't match
-                                                        if ([183, 168].indexOf(e.lineNumber) === -1) {
-                                                            boolOk = false;
-                                                            console.log(e)
-                                                        }
-                                                    }
-
-                                                    // Push millesimes
-                                                    if (boolOk) millesimeLayersList.push(childrensToKeep[iresponse]);
-                                                }
-                                            })
-                                        })
-
-                                        // Founded millesimeLayers
-                                        if (millesimeLayersList.length > 0) {
-                                            // Check if millesimeManagement exist already
-                                            var millesimeManagement = {
-                                                layersList: millesimeLayersList,
-                                                currentMillesime: null,
-                                                parentMillesime: {
-                                                    id: action.id,
-                                                    name: layer.name
-                                                }
-                                            };
-                                            // Override
-                                            if (layer.extendedParams && layer.extendedParams.millesimeManagement) {
-                                                millesimeManagement = layer.extendedParams.millesimeManagement;
-                                                millesimeManagement.layersList = millesimeLayersList;
-                                                // Check currentMillesime activated
-                                                if (millesimeManagement.currentMillesime) {
-                                                    // Check currentMillesime match
-                                                    if (!find(millesimeManagement.layersList, {id: millesimeManagement.currentMillesime})) {
-                                                        // Reset (should reset parent)
-                                                        millesimeManagement.currentMillesime = null;
-                                                        if (getCFGGeonetwork('verbose')) {
-                                                            console.log('Add MillesimeManagement to layer')
-                                                            console.log('new layer properties ->')
-                                                            console.dir(cloneDeep(millesimeManagement))
-                                                            console.groupEnd()
-                                                            console.groupEnd()
-                                                        }
-                                                        return Rx.Observable.of(changeLayerProperties(action.id, {
-                                                            extendedParams: assign(layer.extendedParams, { millesimeManagement: millesimeManagement }),
-                                                            name: millesimeManagement.parentMillesime.name
-                                                        }));
-                                                    }
-                                                }
-                                            }
-                                            if (getCFGGeonetwork('verbose')) {
-                                                console.log('Add MillesimeManagement to layer')
-                                                console.log('new layer properties ->')
-                                                console.dir(cloneDeep(millesimeManagement))
-                                                console.dir(cloneDeep(layer))
-                                                console.dir(cloneDeep(getLayerFromId(state, action.id)))
-                                                console.groupEnd()
-                                                console.groupEnd()
-                                            }
-                                            // Keep the same name (parent or currentMillesime selected)
-                                            return Rx.Observable.of(changeLayerProperties(action.id, {
-                                                extendedParams: layer.extendedParams ? assign(layer.extendedParams, { millesimeManagement: millesimeManagement }) : {
-                                                    millesimeManagement: millesimeManagement
-                                                }
-                                            }));
-                                        }
-                                    }
-
-                                    if (getCFGGeonetwork('verbose')) {
-                                        console.groupEnd()
-                                        console.groupEnd()
-                                    }
-                                    // No Childrens but millesimeManagement
-                                    if (millesimeManagement) {
-                                        // Previous configuration with deleted childrens
-                                        // Reset
-                                        return Rx.Observable.of(changeLayerProperties(action.id, {
-                                            extendedParams: layer.extendedParams ? assign(layer.extendedParams, { millesimeManagement: undefined }) : { millesimeManagement: undefined },
-                                            name: layer.name
-                                        }));
-                                    }
-                                    return Rx.Observable.of(loadedData('No childrens'))
-                                })
-                                .catch(function(e) {
-                                    console.log(e);
-                                    if (getCFGGeonetwork('verbose')) {
-                                        console.groupEnd()
-                                        console.groupEnd()
-                                    }
-                                    return Rx.Observable.of(loadError(e.message))
-                                });
+            // Current layer has tjsManagement ?
+            var tjsManagement = layer.extendedParams && layer.extendedParams.tjsManagement;
+            if (tjsManagement && tjsManagement.url) {
+                // Change url to wms capabilities - to improve
+                var url = tjsManagement.url.replace('tjs', 'wms');
+                // Start with getCapatabilities (should be fast due to cache)
+                return Rx.Observable.defer(() => getCapabilities(url))
+                    .switchMap(function(response) {
+                        if (getCFG('verbose')) {
+                            console.group('analyze style on wms capabilities')
                         }
-
-                        if (getCFGGeonetwork('verbose')) {
-                            console.log('Cannot get childrens')
+                        // Response only status 200 (other are in catch error)
+                        if (response && response.capability && response.capability.layer && response.capability.layer.layer) {
+                            var wmsLayer = find(response.capability.layer.layer, {name: layer.name});
+                            var sld = {
+                                list: [{
+                                    title: "Style par défaut",
+                                    name: "default"
+                                }]
+                            };
+                            if (wmsLayer && wmsLayer.style) {
+                                wmsLayer.style.forEach(function(style) {
+                                    sld.list.push({
+                                        name: style.name,
+                                        title: style.title
+                                    })
+                                })
+                            }
+                            // Append
+                            if (getCFG('verbose')) {
+                                console.log('new layer properties ->')
+                                console.dir(tjsManagement)
+                                console.groupEnd()
+                                console.groupEnd()
+                            }
+                            tjsManagement.sld = sld;
+                            return Rx.Observable.of(changeLayerProperties(action.id, {
+                                extendedParams: assign(layer.extendedParams, {
+                                    tjsManagement: tjsManagement
+                                })
+                            }))
+                        }
+                        // Layer not found in WMS
+                        console.log('WMS get capabilities to find style doesn t succeed')
+                        console.log(response);
+                        if (getCFG('verbose')) {
+                            console.groupEnd()
                             console.groupEnd()
                         }
-                        // No Childrens but millesimeManagement
-                        if (millesimeManagement) {
-                            // Previous configuration with deleted childrens
-                            // Reset
+                        if (tjsManagement.sld) {
+                            delete tjsManagement.sld;
                             return Rx.Observable.of(changeLayerProperties(action.id, {
-                                extendedParams: layer.extendedParams ? assign(layer.extendedParams, { millesimeManagement: undefined }) : { millesimeManagement: undefined },
-                                name: layer.name
+                                extendedParams: assign(layer.extendedParams, {
+                                    tjsManagement: tjsManagement
+                                })
+                            }))
+                        }
+                        return Rx.Observable.empty();
+                    })
+                    .catch(function(e) {
+                        var callbacks = [];
+                        if (tjsManagement.sld) {
+                            delete tjsManagement.sld;
+                            callbacks.push(changeLayerProperties(action.id, {
+                                extendedParams: assign(layer.extendedParams, {
+                                    tjsManagement: tjsManagement
+                                })
                             }));
                         }
-                        return Rx.Observable.of(loadedData('No childrens'))
-                    })
-                    .catch(function(e) {
-                        console.log(e);
-                        if (getCFGGeonetwork('verbose')) {
-                            console.groupEnd()
-                        }
-                        if (e.data && getGeoNetworkERROR(e.data) === 'Ressource introuvable.') {
-                            // IF millesime ok, parent not found then replace parent by millesime
-                            if (layer.extendedParams && layer.extendedParams.millesimeManagement && layer.extendedParams.millesimeManagement.currentMillesime) {
-                                // Get millesime information
-                                return Rx.Observable.defer(() => API.getRecordById(catalogURL, layer.extendedParams.millesimeManagement.currentMillesime))
-                                    .switchMap(function(response) {
-                                        try {
-                                            var title = API.getTitleLayerFromJSON(response);
-                                            var definition = API.getDefinitionLayerFromJSON(response);
-                                            // Replace parent by millesime
-                                            alert('La couche ' + layer.title + ' est introuvable. Elle sera remplacÃ©e par son millÃ©sime dÃ©jÃ  sÃ©lectionnÃ©.')
-                                            var urlPARTS = layer.catalogURL.split('?')
-                                            var catalogURLParams = new URLSearchParams(urlPARTS[1]);
-                                            catalogURLParams.set('id', layer.extendedParams.millesimeManagement.currentMillesime)
-                                            return Rx.Observable.of(changeLayerProperties(layer.id, {
-                                                description: definition,
-                                                title: title,
-                                                extendedParams: assign(layer.extendedParams, { millesimeManagement: null }),
-                                                catalogURL: urlPARTS[0] + '?' + catalogURLParams.toString()
-                                            }))
-                                        } catch (e) {
-                                            // Remove millesime if title and definition not found ?
-                                            console.log(e)
-                                            return Rx.Observable.empty();
-                                        }
-                                    })
-                                    .catch(function(e) {
-                                        // Cannot find millesime also
-                                        return Rx.Observable.of(loadError(e.message))
-                                    })
-                            }
-                        }
-                        return Rx.Observable.of(loadError(e.message))
+                        return Rx.Observable.from(getCapabilitiesERROR(e, "WMS", callbacks));
                     });
+            } else {
+                if (getCFG('verbose')) {
+                    console.groupEnd()
+                }
+                // No tjsManagement field founded
+                return Rx.Observable.empty();
             }
-            if (getCFGGeonetwork('verbose')) {
-                console.groupEnd()
-            }
-            return Rx.Observable.empty();
         });
 };
 
-const onSetMillesimeSelected = (action$, store) => {
+const onSelectTJSDataset = (action$, store) => {
     // on each CREATE_NEW_FEATURE action triggered
-    return action$.ofType(SET_MILLESIME_SELECTED)
+    return action$.ofType(SET_DATASET_SELECTED)
         .switchMap((action) => {
-            const state = store.getState();
-            // Acces to millesimeManagement already existing
-            var layer = getLayerFromId(state, action.parentMillesime);
-            if (getCFGGeonetwork('verbose')) {
-                console.group('| GeoNetworkPlugin | onSetMillesimeSelected')
+            // Find the layer
+            var layer = getLayerFromId(store.getState(), action.layerId);
+            if (getCFG('verbose')) {
+                console.group('| TJSPlugin | onSelectTJSDataset')
                 console.log('init layer state ->')
                 console.dir(cloneDeep(layer))
             }
-            var millesimeManagement = layer.extendedParams.millesimeManagement;
-            var name = layer.name;
-            var actions = []
-
-            // Try to display a millesime
-            if (action.currentMillesime) {
-                // Get geospatial protocol of parent layer and find the same of millesime
-                // If parent WFS -> millesime should WFS and same server
-                if (find(millesimeManagement.layersList, {id: action.currentMillesime})) {
-                    var millesimeLayer = find(millesimeManagement.layersList, {id: action.currentMillesime});
-                    try {
-                        name = API.getNameVSLayerFromJSON(millesimeLayer.record, layer);
-                        millesimeManagement.currentMillesime = action.currentMillesime;
-                    } catch (e) {
-                        // Stay has before state
-                        alert(e.message)
+            var tjsManagement = layer.extendedParams && layer.extendedParams.tjsManagement;
+            // Should have tjsManagement and other attributes
+            if (tjsManagement && tjsManagement.FrameworkURI && tjsManagement.url && action.datasetURI && tjsManagement.datasets && tjsManagement.datasets.list) {
+                // Find datasetSelected in tjsManagement config
+                var datasetSelected = find(tjsManagement.datasets.list, { DatasetURI: action.datasetURI});
+                if (!datasetSelected) {
+                    alert('Dataset not found in the list:\n' + tjsManagement.datasets.list.map((l) => {return l + '\n'}).join('- '));
+                    if (getCFG('verbose')) {
+                        console.groupEnd()
                     }
+                    return Rx.Observable.empty();
                 }
+                tjsManagement.datasets.selected = datasetSelected;
+                // Start with getCapatabilities (should be fast due to cache)
+                return Rx.Observable.defer(() => API.getCapabilities(tjsManagement.url))
+                    .switchMap(function(response) {
+                        // Response error ?
+                        if (response.error) throw response.error;
+                        // Response only status 200 (other are in catch error)
+                        // Get DataDescription
+                        return Rx.Observable.defer(() => API.describeData(tjsManagement.url, tjsManagement.FrameworkURI, action.datasetURI))
+                            .switchMap(function(response) {
+                                if (getCFG('verbose')) {
+                                    console.group('describeData TJS')
+                                }
+                                // Analyze each columnSet
+                                if (response && response.DataDescriptions &&
+                                    response.DataDescriptions.Framework &&
+                                    response.DataDescriptions.Framework.Dataset &&
+                                    response.DataDescriptions.Framework.Dataset.Columnset &&
+                                    response.DataDescriptions.Framework.Dataset.Columnset.Attributes &&
+                                    response.DataDescriptions.Framework.Dataset.Columnset.Attributes.Column) {
+                                    // Add datasetSelected to the plugin configuration
+                                    var attributes = {
+                                        list: []
+                                    };
+                                    // Get list of attributes
+                                    try {
+                                        // Reset
+                                        tjsManagement.datasets.selected.attributes = undefined;
+                                        response.DataDescriptions.Framework.Dataset.Columnset.Attributes.Column.forEach(function(attribute) {
+                                            // Remove frameworkKey
+                                            if (attribute.$['name'] != tjsManagement.FrameworkKey) {
+                                                attributes.list.push({
+                                                    "name": attribute.$['name'],
+                                                    "title": attribute['Title'] == "" ? attribute.$['name'] : attribute['Title']
+                                                });
+                                            }
+                                        })
+
+                                        if (attributes.list.length > 0) {
+                                            tjsManagement.datasets.selected.attributes = attributes;
+                                        }
+
+                                        if (getCFG('verbose')) {
+                                            console.log('new layer properties ->')
+                                            console.dir(cloneDeep(tjsManagement))
+                                            console.groupEnd()
+                                            console.groupEnd()
+                                        }
+                                        return Rx.Observable.of(changeLayerProperties(action.layerId, {
+                                                extendedParams: assign(layer.extendedParams, {
+                                                    tjsManagement: tjsManagement
+                                                })
+                                            })
+                                        );
+                                    } catch (e) {
+                                        console.log('Cannot access to attributes of the datasets')
+                                        console.log(e)
+                                        if (getCFG('verbose')) {
+                                            console.groupEnd()
+                                            console.groupEnd()
+                                        }
+                                        if (tjsManagement.datasets.selected.attributes) tjsManagement.datasets.selected.attributes = undefined;
+                                        // No attributes
+                                        return Rx.Observable.of(changeLayerProperties(action.layerId, {
+                                            extendedParams: assign(layer.extendedParams, {
+                                                tjsManagement: tjsManagement
+                                            })
+                                        }));
+                                    }
+                                } else {
+                                    // Attributes key not found ERROR
+                                    alert('Cannot find attributes in the request describeData\n' + JSON.stringify(response));
+                                    console.log(response)
+                                    if (getCFG('verbose')) {
+                                        console.groupEnd()
+                                        console.groupEnd()
+                                    }
+                                    if (tjsManagement.datasets.selected.attributes) tjsManagement.datasets.selected.attributes = undefined;
+                                    // No date attribute
+                                    return Rx.Observable.of(changeLayerProperties(action.layerId, {
+                                        extendedParams: assign(layer.extendedParams, {
+                                            tjsManagement: tjsManagement
+                                        })
+                                    }));
+                                }
+                            })
+                            .catch(function(e) {
+                                alert('DescribeData TJS doesn t succeed\n' + e.message);
+                                console.log(e)
+                                if (getCFG('verbose')) {
+                                    console.groupEnd()
+                                }
+                                if (tjsManagement.datasets.selected.attributes) tjsManagement.datasets.selected.attributes = undefined;
+                                // No date attribute
+                                return Rx.Observable.of(changeLayerProperties(action.layerId, {
+                                    extendedParams: assign(layer.extendedParams, {
+                                        tjsManagement: tjsManagement
+                                    })
+                                }));
+                            })
+                    })
+                    .catch(function(e) {
+                        return Rx.Observable.from(getCapabilitiesERROR(e, "TJS", []));
+                    });
             } else {
-                // If millesime null -> unselected return parent name
-                name = millesimeManagement.parentMillesime.name;
-                millesimeManagement.currentMillesime = action.currentMillesime;
+                if (getCFG('verbose')) {
+                    console.groupEnd()
+                }
+                // No tjsManagement field founded
+                return Rx.Observable.empty();
             }
-
-            // Return only at the end, to not change the state if error
-            if (getCFGGeonetwork('verbose')) {
-                console.log('new layer properties ->')
-                console.dir(cloneDeep(millesimeManagement))
-                console.groupEnd()
-            }
-            actions.push(changeLayerProperties(layer.id, {
-                extendedParams: layer.extendedParams ? assign(layer.extendedParams, { millesimeManagement: millesimeManagement }) : { millesimeManagement: millesimeManagement },
-                name: name
-            }))
-
-            // Identify isOpen ?
-            var clickPoint = clickPointSelector(state);
-            if (clickPoint && mapInfoRequestsSelector(state).length !== 0) {
-                actions.push(clickOnMap(clickPoint))
-            }
-            // Featuregrid is Open ?
-            if (isFeatureGridOpen(state)) {
-                actions.push(browseData({
-                    id: layer.id,
-                    name: name,
-                    url: layer.url
-                }));
-                actions.push(resetQuery());
-            }
-
-            // Trigger all actions
-            return Rx.Observable.from(actions);
 
         });
 };
 
-const synchronizeMillesimesOnMapLoaded = (action$, store) => {
+const onSelectSLDLayer = (action$, store) => {
+    // on each SET_SLD_SELECTED action triggered
+    return action$.ofType(SET_SLD_SELECTED)
+        .switchMap((action) => {
+            // Find the layer
+            var layer = getLayerFromId(store.getState(), action.layerId);
+            if (getCFG('verbose')) {
+                console.group('| TJSPlugin | onSelectSLDLayer')
+                console.log('init layer state ->')
+                console.log(cloneDeep(layer))
+            }
+            var tjsManagement = layer.extendedParams && layer.extendedParams.tjsManagement;
+            // Should have tjsManagement and other attributes
+            if (tjsManagement && tjsManagement.sld && tjsManagement.sld.list) {
+                if (getCFG('verbose')) {
+                    console.group('select sld style')
+                }
+                // Find datasetSelected in tjsManagement config
+                var sldSelected = find(tjsManagement.sld.list, { name: action.sldName});
+                if (!sldSelected) {
+                    console.log('sld not found in the list')
+                    return Rx.Observable.empty();
+                }
+                // Append
+                tjsManagement.sld.selected = sldSelected;
+                if (getCFG('verbose')) {
+                    console.log('new layer propertiers ->')
+                    console.dir(cloneDeep(tjsManagement))
+                    console.groupEnd()
+                    console.groupEnd()
+                }
+                return Rx.Observable.of(changeLayerProperties(action.id, {
+                    extendedParams: assign(layer.extendedParams, {
+                        tjsManagement: tjsManagement
+                    })
+                }));
+            } else {
+                if (getCFG('verbose')) {
+                    console.groupEnd()
+                }
+                // No tjsManagement field founded
+                return Rx.Observable.empty();
+            }
+        });
+};
+
+const onSelectFilterValue = (action$, store) => {
+    // on each SET_FILTER_VALUE action triggered
+    return action$.ofType(SET_FILTER_VALUE)
+        .switchMap((action) => {
+            // Find the layer
+            var layer = getLayerFromId(store.getState(), action.layerId);
+            if (getCFG('verbose')) {
+                console.group('| TJSPlugin | onSelectFilterValue')
+                console.log('init layer state ->')
+                console.dir(cloneDeep(layer))
+            }
+            var tjsManagement = layer.extendedParams && layer.extendedParams.tjsManagement;
+            // Should have tjsManagement and other attributes
+            if (tjsManagement && tjsManagement.datasets && tjsManagement.datasets.selected.attributes && tjsManagement.datasets.selected.attributes.filter && tjsManagement.datasets.selected.attributes.filter.filterList) {
+                if (getCFG('verbose')) {
+                    console.group('Value selection')
+                }
+                // Find datasetSelected in tjsManagement config
+                if (tjsManagement.datasets.selected.attributes.filter.filterList.indexOf(action.filterValue) === -1) {
+                    console.log('value not found in the list')
+                    return Rx.Observable.empty();
+                }
+                // Append
+                if (tjsManagement.datasets.selected.attributes.filter) {
+                    tjsManagement.datasets.selected.attributes.filter.filterValue = action.filterValue;
+                } else {
+                    tjsManagement.datasets.selected.attributes.filter = {
+                        filterValue : action.filterValue
+                    };
+                }
+
+                if (getCFG('verbose')) {
+                    console.log('new layer properties ->')
+                    console.dir(cloneDeep(tjsManagement))
+                }
+                return Rx.Observable.of(changeLayerProperties(action.id, {
+                    extendedParams: assign(layer.extendedParams, {
+                        tjsManagement: tjsManagement
+                    })
+                }));
+            } else {
+                if (getCFG('verbose')) {
+                    console.groupEnd()
+                }
+                // No tjsManagement field founded
+                return Rx.Observable.empty();
+            }
+        });
+};
+
+const onSelectFilterColumn = (action$, store) => {
+    // on each SET_FILTER_COLUMN action triggered
+    return action$.ofType(SET_FILTER_COLUMN)
+        .switchMap((action) => {
+            // Find the layer
+            var layer = getLayerFromId(store.getState(), action.layerId);
+            if (getCFG('verbose')) {
+                console.group('| TJSPlugin | onSelectFilterColumn')
+                console.log('init layer state ->')
+                console.dir(cloneDeep(layer))
+            }
+            var tjsManagement = layer.extendedParams && layer.extendedParams.tjsManagement;
+            // Should have tjsManagement and other attributes
+            if (tjsManagement && tjsManagement.datasets && tjsManagement.datasets.selected.attributes && tjsManagement.datasets.selected.attributes.list) {
+                if (getCFG('verbose')) {
+                    console.group('Filter Column selection')
+                }
+                // Find datasetSelected in tjsManagement config
+                var filterColumn = find(tjsManagement.datasets.selected.attributes.list, { name: action.filterColumn});
+                if (!filterColumn) {
+                    if (getCFG('verbose')) {
+                        console.log('Column not found in the list')
+                    }
+                    if (tjsManagement.datasets.selected.attributes.filter) delete tjsManagement.datasets.selected.attributes.filter;
+                    // No Filter
+                    return Rx.Observable.of(changeLayerProperties(action.layerId, {
+                        extendedParams: assign(layer.extendedParams, {
+                            tjsManagement: tjsManagement
+                        })
+                    }));
+                }
+                if (getCFG('verbose')) {
+                    console.log('new layer properties ->')
+                    console.dir(cloneDeep(tjsManagement))
+                }
+                return Rx.Observable.defer(() => API.getCapabilities(tjsManagement.url))
+                    .switchMap(function(response) {
+                        // Response error ?
+                        if (response.error) throw response.error;
+                        if (getCFG('verbose')) {
+                            console.group('describeDatasets TJS');
+                        }
+                        // Response only status 200 (other are in catch error)
+                        // Get Data of the attribute selected
+                        return Rx.Observable.defer(() => API.getData(tjsManagement.url, tjsManagement.FrameworkURI, tjsManagement.datasets.selected.DatasetURI, filterColumn.name))
+                            .switchMap((response) => {
+                                if (response &&
+                                    response.GDAS &&
+                                    response.GDAS.Framework &&
+                                    response.GDAS.Framework.Dataset &&
+                                    response.GDAS.Framework.Dataset.Rowset &&
+                                    response.GDAS.Framework.Dataset.Rowset.Row) {
+                                        // Get unicity of values
+                                        tjsManagement.datasets.selected.attributes.filter = {
+                                            filterColumn: action.filterColumn,
+                                            filterList: uniq(response.GDAS.Framework.Dataset.Rowset.Row.map(r => r.V))
+                                        };
+                                        if (getCFG('verbose')) {
+                                            console.log('new layer properties ->')
+                                            console.dir(cloneDeep(tjsManagement))
+                                            console.groupEnd()
+                                            console.groupEnd()
+                                        }
+                                        // Update property
+                                        return Rx.Observable.of(changeLayerProperties(action.id, {
+                                            extendedParams: assign(layer.extendedParams, {
+                                                tjsManagement: tjsManagement
+                                            })
+                                        }));
+                                }
+                                // Data not found
+                                alert('Cannot parse GDAS in the request getData\n' + JSON.stringify(response));
+                                console.log(response)
+                                if (getCFG('verbose')) {
+                                    console.groupEnd()
+                                    console.groupEnd()
+                                }
+                                if (tjsManagement.datasets.selected.attributes.filter) delete tjsManagement.datasets.selected.attributes.filter;
+                                // No filter
+                                return Rx.Observable.of(changeLayerProperties(action.layerId, {
+                                    extendedParams: assign(layer.extendedParams, {
+                                        tjsManagement: tjsManagement
+                                    })
+                                }));
+                            })
+                            .catch((e) => {
+                                alert('GetData TJS doesn t succeed\n' + e.message);
+                                console.log(e)
+                                if (getCFG('verbose')) {
+                                    console.groupEnd()
+                                }
+                                if (tjsManagement.datasets.selected.attributes.filter) delete tjsManagement.datasets.selected.attributes.filter;
+                                // No Filter
+                                return Rx.Observable.of(changeLayerProperties(action.layerId, {
+                                    extendedParams: assign(layer.extendedParams, {
+                                        tjsManagement: tjsManagement
+                                    })
+                                }));
+                            })
+                    })
+                    .catch(function(e) {
+                        return Rx.Observable.from(getCapabilitiesERROR(e, "TJS", []));
+                    });
+            } else {
+                if (getCFG('verbose')) {
+                    console.groupEnd()
+                }
+                // No tjsManagement field founded
+                return Rx.Observable.empty();
+            }
+        });
+};
+
+const joinDataTJS = (action$, store) => {
+    // on each JOIN_LAYER_TJS action triggered
+    return action$.ofType(JOIN_LAYER_TJS)
+        .switchMap((action) => {
+            // Find the layer
+            var state = store.getState();
+            var layer = getLayerFromId(state, action.id);
+            if (getCFG('verbose')) {
+                console.group('| TJSPlugin | joinDataTJS')
+                console.log('init layer state ->')
+                console.log(cloneDeep(layer))
+                console.groupEnd()
+            }
+            var tjsManagement = layer.extendedParams && layer.extendedParams.tjsManagement;
+            // Should have tjsManagement and other attributes
+            if (tjsManagement) {
+                try {
+                    var filter = {};
+                    var style = undefined;
+                    // Filter replacement
+                    if (tjsManagement.datasets.selected.attributes.filter) {
+                        // Date column attribute should be the last one inserted
+                        filter.FilterColumn = tjsManagement.datasets.selected.attributes.filter.filterColumn;
+                        filter.FilterValue  = tjsManagement.datasets.selected.attributes.filter.filterValue;
+                    }
+                    if (tjsManagement.sld.selected && tjsManagement.sld.selected.name !== 'default') {
+                        style = tjsManagement.sld.selected.name;
+                    }
+                    // Post the request
+                    return Rx.Observable.defer(() => API.joinData(tjsManagement.url, tjsManagement.FrameworkURI, tjsManagement.datasets.selected.DatasetURI, tjsManagement.datasets.selected.attributes.list.map(l => l.name), filter, style))
+                        .switchMap(function(response) {
+                            if (response && response.JoinDataResponse && response.JoinDataResponse.JoinedOutputs && response.JoinDataResponse.JoinedOutputs.Output) {
+                                // Find the mechanism
+                                var typeIndex = findIndex(response.JoinDataResponse.JoinedOutputs.Output, function(o) { return o.Mechanism.Identifier.toLowerCase() === layer.type.toLowerCase(); });
+                                if (typeIndex === -1) {
+                                    alert('Cannot find a join result for the service: ' + layer.type);
+                                    return Rx.Observable.empty();
+                                }
+                                var output = response.JoinDataResponse.JoinedOutputs.Output[typeIndex];
+                                try {
+                                    // Group exist first ?
+                                    var groupTJS = find(groupsSelector(state), {title: "Résultats TJS"});
+                                    if (!groupTJS) {
+                                        // Create the group and relaunch the action
+                                        return Rx.Observable.of(
+                                            addGroup("Résultats TJS", undefined, {
+                                                id: 'tjs_resultat',
+                                                name: "tjs_resultat",
+                                                title: 'Résultats TJS',
+                                                expanded: true
+                                            }),
+                                            joinLayer(layer.id)
+                                        );
+                                    }
+
+                                    // Create the newLayer to add
+                                    var domainIndex = findIndex(output.Resource.Parameter, function(p) {return p.$['name'] === 'domainName'});
+                                    var typeNameIndex = findIndex(output.Resource.Parameter, function(p) {return ['typeName', 'layers'].indexOf(p.$['name']) > -1});
+
+                                    // Modify attributes of the new layer
+                                    var newLayer = cloneDeep(layer);
+                                    newLayer.url = output.Resource && output.Resource.Parameter[domainIndex]['_'];
+                                    newLayer.name = output.Resource && output.Resource.Parameter[typeNameIndex]['_'];
+                                    newLayer.dimensions = [];
+                                    newLayer.extendedParams.tjsManagement = undefined;
+                                    newLayer.singleTile = true;
+                                    // Remove layers properties
+                                    var propertiesToRemove = getCFG('removeJoinLayerProperties').split(',');
+                                    propertiesToRemove.forEach((property) => {
+                                        set(newLayer, property, undefined)
+                                    })
+                                    // Documentation of dataset is geonetwork file ?
+                                    // 3 cases
+                                    // - not catalogURL for the layer and no documentation for the dataset => newLayer.catalogURL = undefined || ""
+                                    // - catalogURL for the layer and no documentaion for the dataset => newLayer.catalogURL = undefined && newLayer.extendedParams.annexeCatalogURL = layer.catalogURL
+                                    // - no catalogURL for the layer and documentation for the dataset => newLayer.catalogURL = newCatalogURL (from documentation parsing)
+                                    // - catalogURL for the layer and documentation for the dataset => newLayer.catalogURL = newCatalogURL (from documentation parsing) && newLayer.extendedParams.annexeCatalogURL = layer.catalogURL;
+                                    var newCatalogURL = undefined;
+                                    if (tjsManagement.datasets.selected.Documentation.indexOf('/geonetwork/srv') > -1) {
+                                        // /geonetwork/srv/fre/csw?request=GetRecordById&service=CSW&version=2.0.2&elementSetName=full&id=MT1346159122003
+                                        var params = new URLSearchParams(tjsManagement.datasets.selected.Documentation);
+                                        var idCatalog = params.get('id');
+                                        newCatalogURL = tjsManagement.datasets.selected.Documentation;
+                                        if (idCatalog === null) {
+                                            // Two possibilities of URL type
+                                            var idGeonetworkPath = newCatalogURL.indexOf('/geonetwork/srv');
+                                            var documentationURL = newCatalogURL.slice(idGeonetworkPath);
+                                            documentationURL = documentationURL.split('/');
+                                            if (documentationURL.includes('api') && documentationURL.includes('records')) {
+                                                // https://georchestra.geo-hyd.net/geonetwork/srv/api/records/MT1346159122003/formatters/xml
+                                                idCatalog = documentationURL[documentationURL.indexOf('records') + 1];
+                                            } else if (documentationURL.includes('metadata')) {
+                                                // https://georchestra.geo-hyd.net/geonetwork/srv/fre/catalog.search#/metadata/MT1346159122003
+                                                idCatalog = documentationURL[documentationURL.indexOf('metadata') + 1];
+                                            }
+                                            newCatalogURL = newCatalogURL.slice(0, idGeonetworkPath) + '/geonetwork/srv/fre/csw?request=GetRecordById&service=CSW&version=2.0.2&elementSetName=full&id=' + idCatalog;
+                                        }
+                                    }
+                                    // Manage catalogURL
+                                    if (newLayer.catalogURL) {
+                                        // Update catalogues
+                                        newLayer.extendedParams.annexeCatalogURL = newLayer.catalogURL;
+                                        delete newLayer.catalogURL;
+                                    }
+                                    if (newCatalogURL) newLayer.catalogURL = newCatalogURL;
+                                    // Add params to rejoin the data after
+                                    newLayer.extendedParams.tjsJoinData = {
+                                        url: tjsManagement.url,
+                                        FrameworkURI: tjsManagement.FrameworkURI,
+                                        DatasetURI: tjsManagement.datasets.selected.DatasetURI,
+                                        attributes: tjsManagement.datasets.selected.attributes.list.map(l => l.name),
+                                        filter: filter,
+                                        style: style
+                                    };
+                                    newLayer.title = '[TJS] - ' + newLayer.title;
+                                    // Generate id
+                                    newLayer.id = newLayer.name + '_TJS' + groupTJS.nodes.length + 1;
+                                    return Rx.Observable.from([
+                                        addLayer(newLayer),
+                                        moveNode(newLayer.id, groupTJS.id, groupTJS.nodes.length)
+                                    ]);
+                                } catch (e) {
+                                    alert('Cannot parse the join result to create a new layer.\n' + e.message);
+                                    return Rx.Observable.empty();
+                                }
+                            }
+                            alert('Cannot parse JoinOutput - TJS join not done');
+                            console.log(response)
+                            return Rx.Observable.empty();
+                        })
+                        .catch(function(e) {
+                            // Cannot Join data
+                            alert(e);
+                            console.log(e);
+                            return Rx.Observable.empty();
+                        })
+                } catch (e) {
+                    alert(e);
+                    return Rx.Observable.empty();
+                }
+            } else {
+                // No tjsManagement field founded
+                return Rx.Observable.empty();
+            }
+        });
+};
+
+const prepareTJSOnMapLoaded = (action$, store) => {
     // on each CREATE_NEW_FEATURE action triggered
     return action$.ofType(MAP_CONFIG_LOADED)
         .switchMap((action) => {
+            // First, tjsAllowed ?
             const state = store.getState();
-            var actions = [];
-            // Update Millesimelayers on each
-            layersSelector(state).forEach(function(layer) {
-                // Check if catalogURL exist (means CSW)
-                var catalogURL = layer.catalogURL;
-                if (catalogURL) {
-                    actions.push(getMillesimeLayers(layer.id));
-                }
-            })
-            if (getCFGGeonetwork('verbose')) {
-                console.group('| GeoNetworkPlugin | synchronizeMillesimesOnMapLoaded')
-                console.log('init state ->')
-                console.dir(cloneDeep(state))
+            if (getCFG('verbose')) {
+                console.group('| TJSPlugin | prepareTJSOnMapLoaded')
+                console.log('init map state ->')
+                console.log(cloneDeep(state));
+                console.groupEnd()
             }
+            // Update joinData on each layer which is joined
+            var actions = [];
+            layersSelector(state).forEach(function(layer) {
+                // Check joinData available and update TJS Framework
+                try {
+                    if (layer.extendedParams && layer.extendedParams.tjsJoinData) {
+                        // Execute the request
+                        API.joinData(
+                            layer.extendedParams.tjsJoinData.url,
+                            layer.extendedParams.tjsJoinData.FrameworkURI,
+                            layer.extendedParams.tjsJoinData.DatasetURI,
+                            layer.extendedParams.tjsJoinData.attributes,
+                            layer.extendedParams.tjsJoinData.filter,
+                            layer.extendedParams.tjsJoinData.style
+                        ).then((result) => {
+                            if (getCFG('verbose')) {
+                                console.group('prepareTJSOnMapLoaded - Promise result JoinData')
+                                console.log(result)
+                                console.groupEnd()
+                            }
+                        }).catch((error) => {
+                            console.log('JoinData doesn t succeed')
+                            console.log(error.message)
+                        });
+                    } else if (layer && layer.url && layer.type && ['wms', 'wfs'].indexOf(layer.type) > -1) {
+                        actions.push(getTJSFramework(layer.id));
+                    }
+                } catch (e) {
+                    console.log('Cannot update joinData of the layer ' + layer.name);
+                    console.log(e)
+                }
+            });
             return Rx.Observable.from(actions);
         });
 };
@@ -634,16 +1018,10 @@ const onRemoveLayerFindParentSelected = (action$, store) => {
     // on each CREATE_NEW_FEATURE action triggered
     return action$.ofType(REMOVE_NODE)
         .switchMap((action) => {
-            // Epic enabled ?
-            if (!getCFGGeonetwork('millesimeLayers')) {
-                return Rx.Observable.empty();
-            }
-
-            const state = store.getState();
-            const actualParentSelected = get(state, "geonetworkExtension.parentSelected");
+            const layer2TJSSelected = get(store.getState(), "tjsExtension.layer2TJSSelected");
             // Check if parentSelected is the layer wanted to remove
-            if (action.nodeType === "layers" && actualParentSelected && actualParentSelected.id && actualParentSelected.id === action.node) {
-                return Rx.Observable.of(setParentSelected(null));
+            if (action.nodeType === "layers" && layer2TJSSelected && layer2TJSSelected.id && layer2TJSSelected.id === action.node) {
+                return Rx.Observable.of(setLayer2TJS(null));
             }
             return Rx.Observable.empty();
         });
@@ -651,13 +1029,16 @@ const onRemoveLayerFindParentSelected = (action$, store) => {
 
 /* EXPORTS */
 export default {
-    loadFeatureAttributeEpic,
-    toggleDisplayColumnOrganismeEpic,
-    editNewFeatureOrganisme,
-    updateMillesimeButtonPosition,
-    onAddLayerFindMillesime,
-    onGetMillesimesLayers,
-    onSetMillesimeSelected,
-    synchronizeMillesimesOnMapLoaded,
+    onAddLayerFindTJSFramework,
+    onGetTJSFramework,
+    onGetTJSDatasets,
+    onSelectLayerDisplayTJSButton,
+    onSelectTJSDataset,
+    onGetSLDLayer,
+    onSelectSLDLayer,
+    onSelectFilterValue,
+    onSelectFilterColumn,
+    joinDataTJS,
+    prepareTJSOnMapLoaded,
     onRemoveLayerFindParentSelected
 };
