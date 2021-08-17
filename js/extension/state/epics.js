@@ -4,14 +4,14 @@ import * as Rx from 'rxjs';
 import axios from 'axios';
 const assign = require('object-assign');
 // ACTIONS
-import { SET_FILTER_VALUE, SET_FILTER_COLUMN, loadError, updateStyleTjsBtn, GET_TJS_FRAMEWORK, getTJSFramework, getTJSDatasets, GET_TJS_DATASETS, SET_DATASET_SELECTED, setLayer2TJS, getSLDLayer, GET_SLD_LAYER, SET_SLD_SELECTED, JOIN_LAYER_TJS, joinLayer } from '../actions/tjs';
+import { SET_FILTER_VALUE, SET_FILTER_COLUMN, loadError, updateStyleTjsBtn, GET_TJS_FRAMEWORK, getTJSFramework, getTJSDatasets, GET_TJS_DATASETS, SET_DATASET_SELECTED, setLayer2TJS, getSLDLayer, GET_SLD_LAYER, SET_SLD_SELECTED, JOIN_LAYER_TJS, joinLayer } from './actions';
 const { ADD_LAYER, REMOVE_NODE, changeLayerProperties, SELECT_NODE, addLayer, addGroup, moveNode, LAYER_LOAD } = require('mapstore2/web/client/actions/layers');
 const { MAP_CONFIG_LOADED } = require('mapstore2/web/client/actions/config');
 // SELECTORS
 import {layersSelector, getSelectedLayers, getLayerFromId, groupsSelector} from 'mapstore2/web/client/selectors/layers';
 // UTILS
 const { find, get, set, uniq, isArray, cloneDeep, findIndex } = require("lodash");
-import API from '../utils/TJS';
+import API from '../assets/TJS';
 import { describeFeatureType } from 'mapstore2/web/client/api/WFS';
 import { getCapabilities } from 'mapstore2/web/client/api/WMS';
 
@@ -87,7 +87,7 @@ const onAddLayerFindTJSFramework = (action$, store) => {
                     .take(1) // <-------------------- very important!
                     .switchMap((action) => {
                         // Find layer in store
-                        var layer = getLayerFromId(store.getState(), action.layerId);
+                        var layer = getLayerFromId(store.getState(), addLayerAction.layer.id);
                         if (getCFG('verbose')) {
                             console.group('| TJSPlugin | onAddLayerFindTJSFramework')
                             console.log('init layer state ->')

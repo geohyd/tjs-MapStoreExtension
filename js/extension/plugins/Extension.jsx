@@ -9,7 +9,7 @@ import { setLayer2TJS, setDatasetSelected, selectSLD, selectFilterColumn, select
 import tjsEpics from '../state/epics';
 import tjsExtension from '../state/reducers';
 
-const Dialog = require('mapstore2/web/client/components/misc/Dialog');
+import Dialog from 'mapstore2/web/client/components/misc/Dialog';
 const {Glyphicon: GlyphiconRB, Button: ButtonRB, Checkbox} = require('react-bootstrap');
 import tooltip from 'mapstore2/web/client/components/misc/enhancers/tooltip';
 const Button = tooltip(ButtonRB);

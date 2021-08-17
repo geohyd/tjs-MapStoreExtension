@@ -6,11 +6,6 @@
       "title": "TJS",
       "description": "Integration du plugin TJS pour joindre des donnees",
       "cfg": {
-        "translateAttributes" : true,
-        "multiChoicesEditor" : true,
-        "colOrganisme" : "organisme",
-        "organismeFilter" : true,
-        "millesimeLayers": true
       }
     }
   ]

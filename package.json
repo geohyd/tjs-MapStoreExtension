@@ -100,7 +100,8 @@
         "zip-webpack-plugin": "^3.0.0"
     },
     "dependencies": {
-        "mapstore2": "file:MapStore2"
+        "mapstore2": "file:MapStore2",
+        "xml2js": "^0.4.23"
     },
     "scripts": {
         "postinstall": "node MapStore2/utility/build/postInstall.js",
