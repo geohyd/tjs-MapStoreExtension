@@ -1,4 +1,4 @@
-# MapStore extension for TJS extension project - Version: 1.0.1
+# MapStore extension for TJS extension project - Version: 1.0.2
  
 This repo is a fork of [MapStoreExtension](https://github.com/geosolutions-it/MapStoreExtension).
 
