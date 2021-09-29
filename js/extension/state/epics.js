@@ -933,7 +933,7 @@ const joinDataTJS = (action$, store) => {
                                         filter: filter,
                                         style: style
                                     };
-                                    newLayer.title = '[TJS] - ' + newLayer.title;
+                                    newLayer.title = '[TJS] - ' + newLayer.title + (filter.FilterValue ? ' | ' + filter.FilterValue : '');
                                     // Generate id
                                     newLayer.id = newLayer.name + '_TJS' + groupTJS.nodes.length + 1;
                                     return Rx.Observable.from([
